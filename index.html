@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <title>Visor Panorámico</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+      -webkit-user-select: none;
+    }
+
+    /* 100dvh se adapta exacto al alto real de la pantalla del móvil */
+    body, html {
+      width: 100%;
+      height: 100dvh;
+      overflow: hidden;
+      background-color: #000;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+
+    #contenedor {
+      position: relative;
+      width: 100vw;
+      height: 100dvh;
+      overflow: hidden;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      touch-action: pan-y;
+    }
+
+    #video-panoramico {
+      position: absolute;
+      height: 100%;
+      width: auto;
+      min-width: 100%;
+      object-fit: cover;
+      transform: translateX(0px);
+      will-change: transform;
+      pointer-events: none;
+    }
+
+    #boton-iniciar {
+      position: absolute;
+      bottom: 40px;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 20;
+      padding: 14px 28px;
+      background-color: #ffffff;
+      color: #000000;
+      border: none;
+      border-radius: 30px;
+      font-size: 15px;
+      font-weight: 600;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+      cursor: pointer;
+    }
+
+    #indicador {
+      position: absolute;
+      top: 30px;
+      z-index: 10;
+      color: rgba(255, 255, 255, 0.7);
+      font-size: 13px;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      pointer-events: none;
+    }
+
+    /* PANTALLA DE BLOQUEO CUANDO ESTÁ EN HORIZONTAL */
+    #bloqueo-horizontal {
+      display: none;
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100vw;
+      height: 100dvh;
+      background: #0b0b0b;
+      z-index: 999;
+      flex-direction: column;
+      justify-content: center;
+      align-items: center;
+      color: #fff;
+      text-align: center;
+      padding: 24px;
+    }
+
+    #bloqueo-horizontal svg {
+      width: 52px;
+      height: 52px;
+      margin-bottom: 16px;
+      fill: #fff;
+      animation: rotarIcono 1.8s infinite ease-in-out;
+    }
+
+    @keyframes rotarIcono {
+      0% { transform: rotate(90deg); }
+      50% { transform: rotate(0deg); }
+      100% { transform: rotate(90deg); }
+    }
+
+    /* Se activa automáticamente si el dispositivo se coloca horizontal */
+    @media (orientation: landscape) {
+      #bloqueo-horizontal {
+        display: flex;
+      }
+    }
+  </style>
+</head>
+<body>
+
+  <!-- Mensaje que fuerza al usuario a girar a vertical -->
+  <div id="bloqueo-horizontal">
+    <svg viewBox="0 0 24 24">
+      <path d="M17 1.01L7 1c-1.1 0-2 .9-2 2v18c0 1.1.9 2 2 2h10c1.1 0 2-.9 2-2V3c0-1.1-.9-1.99-2-1.99zM17 19H7V5h10v14z"/>
+    </svg>
+    <h2 style="font-size: 18px; margin-bottom: 8px;">Gira tu teléfono</h2>
+    <p style="font-size: 14px; color: #888;">Esta experiencia requiere el móvil en posición vertical.</p>
+  </div>
+
+  <div id="contenedor">
+    <div id="indicador">Mueve el móvil o arrastra a los lados</div>
+
+    <video 
+      id="video-panoramico" 
+      src="video.MOV" 
+      playsinline 
+      webkit-playsinline 
+      loop 
+      muted>
+    </video>
+
+    <button id="boton-iniciar">Tocar para explorar</button>
+  </div>
+
+  <script>
+    const video = document.getElementById('video-panoramico');
+    const contenedor = document.getElementById('contenedor');
+    const boton = document.getElementById('boton-iniciar');
+
+    let desplazamientoMaximo = 0;
+    let posicionActual = 0;
+    let posicionObjetivo = 0;
+    let toqueInicioX = 0;
+
+    function actualizarMargenes() {
+      const anchoVideo = video.getBoundingClientRect().width;
+      const anchoPantalla = window.innerWidth;
+      desplazamientoMaximo = Math.max(0, (anchoVideo - anchoPantalla) / 2);
+    }
+
+    window.addEventListener('resize', actualizarMargenes);
+    window.addEventListener('orientationchange', () => {
+      setTimeout(actualizarMargenes, 300);
+    });
+    video.addEventListener('loadedmetadata', actualizarMargenes);
+
+    boton.addEventListener('click', async () => {
+      boton.style.display = 'none';
+      video.play();
+      actualizarMargenes();
+
+      // 1. Intentar bloquear la orientación a vertical (soportado en navegadores compatibles)
+      if (screen.orientation && screen.orientation.lock) {
+        try {
+          await screen.orientation.lock('portrait');
+        } catch (e) {
+          // Si el navegador no permite el bloqueo por hardware, el CSS de arriba se encarga
+        }
+      }
+
+      // 2. Permiso giroscopio en iOS Safari
+      if (typeof DeviceOrientationEvent !== 'undefined' && 
+          typeof DeviceOrientationEvent.requestPermission === 'function') {
+        try {
+          const permiso = await DeviceOrientationEvent.requestPermission();
+          if (permiso === 'granted') {
+            window.addEventListener('deviceorientation', manejarGiroscopio);
+          }
+        } catch (error) {
+          console.warn('Permiso denegado:', error);
+        }
+      } else {
+        window.addEventListener('deviceorientation', manejarGiroscopio);
+      }
+    });
+
+    function manejarGiroscopio(evento) {
+      if (desplazamientoMaximo <= 0) actualizarMargenes();
+      const inclinacion = Math.max(-45, Math.min(45, evento.gamma || 0));
+      posicionObjetivo = -(inclinacion / 45) * desplazamientoMaximo;
+    }
+
+    contenedor.addEventListener('touchstart', (e) => {
+      toqueInicioX = e.touches[0].clientX;
+    }, { passive: true });
+
+    contenedor.addEventListener('touchmove', (e) => {
+      if (desplazamientoMaximo <= 0) actualizarMargenes();
+      const diferenciaX = e.touches[0].clientX - toqueInicioX;
+      posicionObjetivo = Math.max(-desplazamientoMaximo, Math.min(desplazamientoMaximo, posicionObjetivo + diferenciaX * 1.2));
+      toqueInicioX = e.touches[0].clientX;
+    }, { passive: true });
+
+    function animar() {
+      posicionActual += (posicionObjetivo - posicionActual) * 0.1;
+      video.style.transform = `translateX(${posicionActual}px)`;
+      requestAnimationFrame(animar);
+    }
+
+    animar();
+  </script>
+</body>
+</html>
