@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-  <title>Control de Paneo Interactivo</title>
+  <title>Visor Panorámico Interactivo (Foto)</title>
   <style>
     * {
       box-sizing: border-box;
@@ -32,12 +32,18 @@
       touch-action: none;
     }
 
-    /* El video cubre la pantalla completa */
-    #video-paneo {
-      width: 100%;
+    /* La foto cubre todo el alto del móvil y desborda libremente a lo ancho */
+    #foto-panoramica {
+      position: absolute;
       height: 100%;
+      width: auto;
+      min-width: 100%;
       object-fit: cover;
+      transform: translateX(0px);
+      will-change: transform;
       pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.5s ease;
     }
 
     #boton-iniciar {
@@ -66,115 +72,105 @@
       text-transform: uppercase;
       letter-spacing: 0.5px;
       pointer-events: none;
+      text-shadow: 0 2px 4px rgba(0,0,0,0.5);
     }
   </style>
 </head>
 <body>
 
   <div id="contenedor">
-    <div id="indicador">Mueve el móvil o arrastra para ver alrededor</div>
+    <div id="indicador">Mueve el móvil o arrastra para explorar</div>
 
-    <video 
-      id="video-paneo" 
-      src="video.mp4" 
-      preload="auto" 
-      playsinline 
-      webkit-playsinline 
-      muted>
-    </video>
+    <!-- Reemplaza "panorama.jpg" con tu foto muy ancha -->
+    <img 
+      id="foto-panoramica" 
+      src="panorama.JPG" 
+      alt="Paisaje Panorámico"
+      onload="inicializarMargenes()"
+    />
 
-    <button id="boton-iniciar">Tocar para interactuar</button>
+    <button id="boton-iniciar">Tocar para explorar</button>
   </div>
 
   <script>
-    const video = document.getElementById('video-paneo');
+    const foto = document.getElementById('foto-panoramica');
     const contenedor = document.getElementById('contenedor');
     const boton = document.getElementById('boton-iniciar');
 
-    let videoDuracion = 0;
-    let tiempoObjetivo = 0;
-    let tiempoActual = 0;
+    let desplazamientoMaximo = 0;
+    let posicionActual = 0;
+    let posicionObjetivo = 0;
     let toqueInicioX = 0;
-    let sensorActivo = false;
 
-    video.addEventListener('loadedmetadata', () => {
-      videoDuracion = video.duration;
-      // Colocar el video a la mitad del paneo al iniciar
-      tiempoObjetivo = videoDuracion / 2;
-      tiempoActual = tiempoObjetivo;
-      video.currentTime = tiempoActual;
-    });
+    // Calcular el excedente que queda a los lados para mover la foto
+    function inicializarMargenes() {
+      const anchoFoto = foto.getBoundingClientRect().width;
+      const anchoPantalla = window.innerWidth;
+      
+      // La mitad de la diferencia es lo que podemos mover a cada lado
+      desplazamientoMaximo = Math.max(0, (anchoFoto - anchoPantalla) / 2);
+      foto.style.opacity = "1"; // Mostrar la foto con suavidad cuando esté lista
+    }
+
+    window.addEventListener('resize', inicializarMargenes);
 
     boton.addEventListener('click', async () => {
       boton.style.display = 'none';
-      
-      // Reproducir y pausar de inmediato para desbloquear el buffer en iOS
-      video.play().then(() => {
-        video.pause();
-      }).catch(e => console.log(e));
+      inicializarMargenes();
 
-      // Solicitar permiso de giroscopio en iOS
+      // Solicitar permisos de giroscopio en iOS (Safari requiere HTTPS)
       if (typeof DeviceOrientationEvent !== 'undefined' && 
           typeof DeviceOrientationEvent.requestPermission === 'function') {
         try {
           const permiso = await DeviceOrientationEvent.requestPermission();
           if (permiso === 'granted') {
             window.addEventListener('deviceorientation', manejarGiroscopio);
-            sensorActivo = true;
           }
         } catch (error) {
-          console.warn('Permiso giroscopio denegado:', error);
+          console.warn('Permiso de giroscopio denegado:', error);
         }
       } else {
         window.addEventListener('deviceorientation', manejarGiroscopio);
-        sensorActivo = true;
       }
     });
 
-    // Control mediante Giroscopio físico
+    // Control por giroscopio (mover el móvil físicamente)
     function manejarGiroscopio(e) {
-      if (!videoDuracion) return;
-
+      if (desplazamientoMaximo <= 0) inicializarMargenes();
+      
       // gamma mide inclinación de -90 a 90 grados
-      // Tomamos un rango cómodo de movimiento: de -35° (izquierda) a +35° (derecha)
-      const rangoGrados = 35;
-      let inclinacion = Math.max(-rangoGrados, Math.min(rangoGrados, e.gamma || 0));
-
-      // Normalizar de 0 (extremo izquierdo) a 1 (extremo derecho)
-      let porcentaje = (inclinacion + rangoGrados) / (rangoGrados * 2);
-
-      tiempoObjetivo = porcentaje * videoDuracion;
+      // Rango de sensibilidad de -35° a 35° de inclinación
+      const inclinacion = Math.max(-35, Math.min(35, e.gamma || 0));
+      
+      // Mapear inclinación directamente a la posición X de la imagen
+      posicionObjetivo = -(inclinacion / 35) * desplazamientoMaximo;
     }
 
-    // Control táctil (arrastrar con el dedo)
+    // Control táctil (arrastrar para ver más rápido o sin sensor)
     contenedor.addEventListener('touchstart', (e) => {
       toqueInicioX = e.touches[0].clientX;
     }, { passive: true });
 
     contenedor.addEventListener('touchmove', (e) => {
-      if (!videoDuracion) return;
+      if (desplazamientoMaximo <= 0) inicializarMargenes();
       const diferenciaX = e.touches[0].clientX - toqueInicioX;
       
-      // Sensibilidad del arrastre
-      const factorSensibilidad = videoDuracion / window.innerWidth;
-      tiempoObjetivo = Math.max(0, Math.min(videoDuracion, tiempoObjetivo - (diferenciaX * factorSensibilidad)));
+      // Actualizar la posición del objetivo basándonos en el arrastre (sensibilidad 1.3)
+      posicionObjetivo = Math.max(-desplazamientoMaximo, Math.min(desplazamientoMaximo, posicionObjetivo + diferenciaX * 1.3));
       
       toqueInicioX = e.touches[0].clientX;
     }, { passive: true });
 
-    // Animación continua para sincronizar los fotogramas suavemente
-    function sincronizarCuadros() {
-      // Suavizado tipo Lerp para que no salte tosco entre fotogramas
-      tiempoActual += (tiempoObjetivo - tiempoActual) * 0.15;
-
-      if (Math.abs(video.currentTime - tiempoActual) > 0.03) {
-        video.currentTime = tiempoActual;
-      }
-
-      requestAnimationFrame(sincronizarCuadros);
+    // Bucle para dar un movimiento suave de transición
+    function suavizarMovimiento() {
+      // Interpolación para lograr un efecto inercial muy natural
+      posicionActual += (posicionObjetivo - posicionActual) * 0.12;
+      
+      foto.style.transform = `translateX(${posicionActual}px)`;
+      requestAnimationFrame(suavizarMovimiento);
     }
 
-    sincronizarCuadros();
+    suavizarMovimiento();
   </script>
 </body>
 </html>
